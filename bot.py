@@ -2,6 +2,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from openai import OpenAI
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
@@ -14,10 +15,13 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_CHAT_ID = 7450937325
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
+
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR = range(4)
 
@@ -168,7 +172,6 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-
     allowed_sizes = ["46", "48", "50", "52", "54", "56"]
 
     if text == "⬅️ Orqaga":
@@ -195,7 +198,6 @@ async def ask_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-
     allowed_colors = ["⚪ Oq", "🌸 Pushti", "⚫ Qora", "🔴 Qizil", "🔵 Ko‘k"]
 
     if text == "⬅️ Orqaga":
@@ -260,6 +262,45 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_markup
     )
     return ConversationHandler.END
+
+
+async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not client:
+        await update.message.reply_text(
+            "OPENAI_API_KEY qo‘shilmagan. Render Environment ga key qo‘ying."
+        )
+        return
+
+    question = update.message.text
+
+    try:
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Sen foydali yordamchi botsan. Uzbek tilida sodda va tushunarli javob ber."
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": question
+                        }
+                    ],
+                },
+            ],
+        )
+        answer = response.output_text or "Javob topilmadi."
+        await update.message.reply_text(answer)
+    except Exception as e:
+        await update.message.reply_text(f"AI xato berdi: {e}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,7 +394,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 longitude=69.153924
             )
             await update.message.reply_text("📍 Toshkent manzili")
-
         elif selected_city == "Qo‘qon":
             await context.bot.send_location(
                 chat_id=update.effective_chat.id,
@@ -361,7 +401,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 longitude=70.963713
             )
             await update.message.reply_text("📍 Qo‘qon manzili")
-
         else:
             await update.message.reply_text("Avval shaharni tanlang.")
 
@@ -399,7 +438,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Asosiy menu", reply_markup=main_markup)
 
     else:
-        await update.message.reply_text("Kerakli tugmani tanlang.")
+        await ask_ai(update, context)
 
 
 telegram_app = Application.builder().token(TOKEN).build()
@@ -434,7 +473,6 @@ async def lifespan(app: FastAPI):
     if RENDER_EXTERNAL_URL:
         webhook_url = RENDER_EXTERNAL_URL.rstrip("/") + "/webhook"
         await telegram_app.bot.set_webhook(webhook_url)
-        print("Webhook o‘rnatildi:", webhook_url)
 
     yield
 
