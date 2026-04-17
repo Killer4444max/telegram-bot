@@ -2,8 +2,14 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
@@ -12,12 +18,42 @@ if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
 
 
+main_keyboard = [
+    ["🛍 Mahsulotlar", "📞 Aloqa"],
+    ["ℹ️ Haqimizda", "📢 Kanal"],
+]
+main_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salom Odilbek! Bot ishlayapti 🚀")
+    await update.message.reply_text(
+        "Salom Odilbek! Bot ishlayapti 🚀",
+        reply_markup=main_markup
+    )
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "🛍 Mahsulotlar":
+        await update.message.reply_text("Mahsulotlar bo‘limi ochildi ✅")
+    elif text == "📞 Aloqa":
+        await update.message.reply_text(
+            "Aloqa uchun:\n"
+            "📱 +998773005353\n"
+            "📍 Qo‘qon"
+        )
+    elif text == "ℹ️ Haqimizda":
+        await update.message.reply_text("Bizning do‘konimizga xush kelibsiz ✅")
+    elif text == "📢 Kanal":
+        await update.message.reply_text("Kanal linkini shu yerga yozasan")
+    else:
+        await update.message.reply_text("Tugmalardan birini bosing.")
 
 
 telegram_app = Application.builder().token(TOKEN).build()
 telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 
 @asynccontextmanager
