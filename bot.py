@@ -14,7 +14,7 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-ADMIN_CHAT_ID =  7450937325 # <-- bu yerga o'zingning telegram ID'ingni yoz
+ADMIN_CHAT_ID = 7450937325
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
@@ -122,7 +122,11 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bizning kanal: @kanal_username")
+    await update.message.reply_text(
+        "📢 Bizning kanallarimiz:\n\n"
+        "1️⃣ https://t.me/shoda11Y\n"
+        "2️⃣ https://t.me/bilyonejni"
+    )
 
 
 async def order_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -321,14 +325,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if selected_city == "Toshkent":
             await update.message.reply_text(
                 "📱 Toshkent telefon raqamlari:\n\n"
-                "1) +998 90 111 11 11\n"
-                "2) +998 91 222 22 22"
+                "1) +998 90 827 88 25\n"
+                "2) +998 90 827 88 96"
             )
         elif selected_city == "Qo‘qon":
             await update.message.reply_text(
                 "📱 Qo‘qon telefon raqamlari:\n\n"
                 "1) +998 95 007 95 66\n"
-                "2) +998 90 064 03 16"
+                "2) +998 90 550 70 45"
             )
         else:
             await update.message.reply_text("Avval shaharni tanlang.")
