@@ -14,7 +14,7 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-ADMIN_CHAT_ID = 123456789  # <-- bu yerga o'zingning telegram ID'ingni yoz
+ADMIN_CHAT_ID =  7450937325 # <-- bu yerga o'zingning telegram ID'ingni yoz
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
