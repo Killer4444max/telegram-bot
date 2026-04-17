@@ -347,9 +347,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "📍 Manzil":
         if selected_city == "Toshkent":
-            await update.message.reply_text("📍 Toshkent manzili:\nToshkent shahri")
+            await context.bot.send_location(
+                chat_id=update.effective_chat.id,
+                latitude=41.257681,
+                longitude=69.153924
+            )
+            await update.message.reply_text("📍 Toshkent manzili")
+
         elif selected_city == "Qo‘qon":
-            await update.message.reply_text("📍 Qo‘qon manzili:\nQo‘qon shahri")
+            await context.bot.send_location(
+                chat_id=update.effective_chat.id,
+                latitude=40.554953,
+                longitude=70.963713
+            )
+            await update.message.reply_text("📍 Qo‘qon manzili")
+
         else:
             await update.message.reply_text("Avval shaharni tanlang.")
 
