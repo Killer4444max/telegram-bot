@@ -40,12 +40,17 @@ product_keyboard = [
 ]
 product_markup = ReplyKeyboardMarkup(product_keyboard, resize_keyboard=True)
 
-# Aloqa shahar tanlash
-city_keyboard = [
-    ["📍 Toshkent", "📍 Qo‘qon"],
+# 12 ta viloyat
+region_keyboard = [
+    ["📍 Toshkent", "📍 Andijon"],
+    ["📍 Farg‘ona", "📍 Namangan"],
+    ["📍 Samarqand", "📍 Buxoro"],
+    ["📍 Xorazm", "📍 Qashqadaryo"],
+    ["📍 Surxondaryo", "📍 Jizzax"],
+    ["📍 Sirdaryo", "📍 Navoiy"],
     ["⬅️ Orqaga"],
 ]
-city_markup = ReplyKeyboardMarkup(city_keyboard, resize_keyboard=True)
+region_markup = ReplyKeyboardMarkup(region_keyboard, resize_keyboard=True)
 
 # Aloqa ichki menu
 contact_detail_keyboard = [
@@ -111,10 +116,10 @@ async def products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["section"] = "contact_city"
+    context.user_data["section"] = "contact_region"
     await update.message.reply_text(
-        "📞 Qaysi shahar bo‘yicha aloqa kerak?\n\nQuyidan tanlang:",
-        reply_markup=city_markup
+        "📞 Qaysi viloyat bo‘yicha aloqa kerak?\n\nQuyidan tanlang:",
+        reply_markup=region_markup
     )
 
 
@@ -306,7 +311,7 @@ async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     section = context.user_data.get("section", "main")
-    selected_city = context.user_data.get("selected_city", "")
+    selected_region = context.user_data.get("selected_region", "")
 
     if text == "🛍 Mahsulotlar":
         await products(update, context)
@@ -346,63 +351,66 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📞 Aloqa":
         await contact(update, context)
 
-    elif text == "📍 Toshkent":
-        context.user_data["selected_city"] = "Toshkent"
+    # 12 viloyat tanlash
+    elif text in [
+        "📍 Toshkent", "📍 Andijon", "📍 Farg‘ona", "📍 Namangan",
+        "📍 Samarqand", "📍 Buxoro", "📍 Xorazm", "📍 Qashqadaryo",
+        "📍 Surxondaryo", "📍 Jizzax", "📍 Sirdaryo", "📍 Navoiy"
+    ]:
+        context.user_data["selected_region"] = text
         context.user_data["section"] = "contact_detail"
         await update.message.reply_text(
-            "📍 Toshkent bo‘yicha bo‘limni tanlang:",
-            reply_markup=contact_detail_markup
-        )
-
-    elif text == "📍 Qo‘qon":
-        context.user_data["selected_city"] = "Qo‘qon"
-        context.user_data["section"] = "contact_detail"
-        await update.message.reply_text(
-            "📍 Qo‘qon bo‘yicha bo‘limni tanlang:",
+            f"{text} bo‘yicha bo‘limni tanlang:",
             reply_markup=contact_detail_markup
         )
 
     elif text == "📱 Qo‘ng‘iroq":
-        if selected_city == "Toshkent":
+        if selected_region == "📍 Toshkent":
             await update.message.reply_text(
                 "📱 Toshkent telefon raqamlari:\n\n"
                 "1) +998 90 827 88 25\n"
                 "2) +998 90 827 88 96"
             )
-        elif selected_city == "Qo‘qon":
+        elif selected_region == "📍 Farg‘ona":
             await update.message.reply_text(
-                "📱 Qo‘qon telefon raqamlari:\n\n"
+                "📱 Farg‘ona telefon raqamlari:\n\n"
                 "1) +998 95 007 95 66\n"
                 "2) +998 90 550 70 45"
             )
         else:
-            await update.message.reply_text("Avval shaharni tanlang.")
+            await update.message.reply_text(
+                f"{selected_region} uchun telefon raqamlari tez orada qo‘shiladi."
+            )
 
     elif text == "💬 Telegram":
-        if selected_city == "Toshkent":
+        if selected_region == "📍 Toshkent":
             await update.message.reply_text("💬 Toshkent Telegram:\n@shodashop_toshkent")
-        elif selected_city == "Qo‘qon":
-            await update.message.reply_text("💬 Qo‘qon Telegram:\n@shodashop")
+        elif selected_region == "📍 Farg‘ona":
+            await update.message.reply_text("💬 Farg‘ona Telegram:\n@shodashop")
         else:
-            await update.message.reply_text("Avval shaharni tanlang.")
+            await update.message.reply_text(
+                f"{selected_region} uchun Telegram manzili tez orada qo‘shiladi."
+            )
 
     elif text == "📍 Manzil":
-        if selected_city == "Toshkent":
+        if selected_region == "📍 Toshkent":
             await context.bot.send_location(
                 chat_id=update.effective_chat.id,
                 latitude=41.257681,
                 longitude=69.153924
             )
             await update.message.reply_text("📍 Toshkent manzili")
-        elif selected_city == "Qo‘qon":
+        elif selected_region == "📍 Farg‘ona":
             await context.bot.send_location(
                 chat_id=update.effective_chat.id,
                 latitude=40.554953,
                 longitude=70.963713
             )
-            await update.message.reply_text("📍 Qo‘qon manzili")
+            await update.message.reply_text("📍 Farg‘ona manzili")
         else:
-            await update.message.reply_text("Avval shaharni tanlang.")
+            await update.message.reply_text(
+                f"{selected_region} uchun manzil tez orada qo‘shiladi."
+            )
 
     elif text == "ℹ️ Haqimizda":
         await about(update, context)
@@ -422,15 +430,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=product_markup
             )
 
-        elif section == "contact_city":
+        elif section == "contact_region":
             context.user_data["section"] = "main"
             await update.message.reply_text("Asosiy menu", reply_markup=main_markup)
 
         elif section == "contact_detail":
-            context.user_data["section"] = "contact_city"
+            context.user_data["section"] = "contact_region"
             await update.message.reply_text(
-                "📞 Qaysi shahar bo‘yicha aloqa kerak?",
-                reply_markup=city_markup
+                "📞 Qaysi viloyat bo‘yicha aloqa kerak?",
+                reply_markup=region_markup
             )
 
         else:
