@@ -29,11 +29,10 @@ ADMIN_CHAT_ID = 7450937325
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
 
-# Bot kanalga majburiy obuna
-# MUHIM: bot shu kanallarda admin bo‘lishi kerak
+# Faqat bitta kanal
+# MUHIM: bot shu kanalda admin bo‘lishi kerak
 REQUIRED_CHANNELS = [
-    ("Shoda kanal 1", "@shoda11Y", "https://t.me/shoda11Y"),
-    ("Shoda kanal 2", "@bilyonejni", "https://t.me/bilyonejni"),
+    ("Bizning kanal", "@bilyonejni", "https://t.me/bilyonejni"),
 ]
 
 DATA_DIR = Path(".")
@@ -257,7 +256,7 @@ async def ensure_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
         return True
 
     text = (
-        "❗ Botdan foydalanish uchun avval quyidagi kanallarga a’zo bo‘ling.\n\n"
+        "❗ Botdan foydalanish uchun avval kanalga a’zo bo‘ling.\n\n"
         "A’zo bo‘lgach, ✅ Tekshirish tugmasini bosing."
     )
 
@@ -321,9 +320,8 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📢 Bizning kanallarimiz:\n\n"
-        "1️⃣ https://t.me/shoda11Y\n"
-        "2️⃣ https://t.me/bilyonejni"
+        "📢 Bizning kanal:\n\n"
+        "https://t.me/bilyonejni"
     )
 
 
@@ -659,7 +657,7 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
             reply_markup=main_markup
         )
     else:
-        await query.answer("Hali barcha kanallarga a’zo bo‘lmagansiz.", show_alert=True)
+        await query.answer("Hali kanalga a’zo bo‘lmagansiz.", show_alert=True)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
