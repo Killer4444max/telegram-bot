@@ -2,11 +2,18 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     ConversationHandler,
     filters,
@@ -14,12 +21,38 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-ADMIN_CHAT_ID = 7450937325
+ADMIN_CHAT_ID = 7450937325  # shu joyga admin telegram ID qoladi
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
 
 ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR = range(5)
+
+# Vaqtinchalik xotira (deploy bo'lsa tozalanadi)
+ORDERS = {}
+
+PRODUCT_PRICES = {
+    "Pijama": 120000,
+    "Pinuar": 150000,
+    "Parfumeriya": 90000,
+}
+
+DELIVERY_PRICES = {
+    "📍 Toshkent": 15000,
+    "📍 Andijon": 25000,
+    "📍 Farg‘ona": 20000,
+    "📍 Namangan": 25000,
+    "📍 Samarqand": 25000,
+    "📍 Buxoro": 30000,
+    "📍 Xorazm": 35000,
+    "📍 Qashqadaryo": 30000,
+    "📍 Surxondaryo": 35000,
+    "📍 Jizzax": 25000,
+    "📍 Sirdaryo": 20000,
+    "📍 Navoiy": 30000,
+}
+
+ALLOWED_REGIONS = list(DELIVERY_PRICES.keys())
 
 # Asosiy menu
 main_keyboard = [
@@ -94,11 +127,16 @@ region_keyboard = [
 ]
 region_markup = ReplyKeyboardMarkup(region_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-allowed_regions = [
-    "📍 Toshkent", "📍 Andijon", "📍 Farg‘ona", "📍 Namangan",
-    "📍 Samarqand", "📍 Buxoro", "📍 Xorazm", "📍 Qashqadaryo",
-    "📍 Surxondaryo", "📍 Jizzax", "📍 Sirdaryo", "📍 Navoiy"
-]
+
+def make_admin_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Qabul qilish", callback_data=f"accept:{order_id}"),
+                InlineKeyboardButton("❌ Bekor qilish", callback_data=f"reject:{order_id}"),
+            ]
+        ]
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,14 +205,11 @@ async def ask_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "⬅️ Orqaga":
-        await update.message.reply_text(
-            "Buyurtma bekor qilindi.",
-            reply_markup=main_markup
-        )
         context.user_data["section"] = "main"
+        await update.message.reply_text("Buyurtma bekor qilindi.", reply_markup=main_markup)
         return ConversationHandler.END
 
-    if text not in allowed_regions:
+    if text not in ALLOWED_REGIONS:
         await update.message.reply_text(
             "Viloyatni tugmadan tanlang:",
             reply_markup=region_markup
@@ -182,8 +217,12 @@ async def ask_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_REGION
 
     context.user_data["order_region"] = text
+    delivery_price = DELIVERY_PRICES.get(text, 0)
+
     await update.message.reply_text(
-        f"Tanlangan viloyat: {text}\n\nIsmingizni yozing:"
+        f"Tanlangan viloyat: {text}\n"
+        f"🚚 Yetkazib berish narxi: {delivery_price:,} so‘m\n\n"
+        f"Ismingizni yozing:"
     )
     return ASK_NAME
 
@@ -205,11 +244,11 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=size_markup
         )
         return ASK_SIZE
-    else:
-        await update.message.reply_text(
-            "Pastdagi 📲 Raqamni yuborish tugmasini bosing."
-        )
-        return ASK_PHONE
+
+    await update.message.reply_text(
+        "Pastdagi 📲 Raqamni yuborish tugmasini bosing."
+    )
+    return ASK_PHONE
 
 
 async def ask_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -265,30 +304,62 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     size = context.user_data.get("size", "")
     color = context.user_data.get("color", "")
 
+    product_price = PRODUCT_PRICES.get(product, 0)
+    delivery_price = DELIVERY_PRICES.get(region, 0)
+    total_price = product_price + delivery_price
+
+    order_id = len(ORDERS) + 1
+    ORDERS[order_id] = {
+        "user_id": update.effective_chat.id,
+        "product": product,
+        "region": region,
+        "name": name,
+        "phone": phone,
+        "size": size,
+        "color": color,
+        "product_price": product_price,
+        "delivery_price": delivery_price,
+        "total_price": total_price,
+        "status": "Yangi",
+    }
+
     user_text = (
         "✅ Buyurtmangiz qabul qilindi!\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {product}\n"
         f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
-        f"🎨 Rang: {color}"
+        f"🎨 Rang: {color}\n"
+        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
+        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
+        f"💰 Jami: {total_price:,} so‘m"
     )
 
     admin_text = (
         "🛒 YANGI BUYURTMA\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {product}\n"
         f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
-        f"🎨 Rang: {color}"
+        f"🎨 Rang: {color}\n"
+        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
+        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
+        f"💰 Jami: {total_price:,} so‘m\n"
+        f"📌 Holat: Yangi"
     )
 
     await update.message.reply_text(user_text, reply_markup=main_markup)
 
     try:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=admin_text,
+            reply_markup=make_admin_keyboard(order_id)
+        )
     except Exception:
         await update.message.reply_text(
             "Buyurtma saqlandi, lekin adminga yuborilmadi. ADMIN_CHAT_ID ni tekshiring."
@@ -309,6 +380,76 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != ADMIN_CHAT_ID:
+        await query.answer("Siz admin emassiz.", show_alert=True)
+        return
+
+    data = query.data
+    action, order_id_str = data.split(":")
+    order_id = int(order_id_str)
+
+    if order_id not in ORDERS:
+        await query.edit_message_text("Buyurtma topilmadi.")
+        return
+
+    order = ORDERS[order_id]
+
+    if action == "accept":
+        order["status"] = "Qabul qilindi ✅"
+    elif action == "reject":
+        order["status"] = "Bekor qilindi ❌"
+
+    updated_text = (
+        "🛒 BUYURTMA HOLATI YANGILANDI\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
+        f"🛍 Mahsulot: {order['product']}\n"
+        f"📍 Viloyat: {order['region']}\n"
+        f"👤 Ism: {order['name']}\n"
+        f"📱 Telefon: {order['phone']}\n"
+        f"📏 Razmer: {order['size']}\n"
+        f"🎨 Rang: {order['color']}\n"
+        f"💵 Mahsulot narxi: {order['product_price']:,} so‘m\n"
+        f"🚚 Yetkazib berish: {order['delivery_price']:,} so‘m\n"
+        f"💰 Jami: {order['total_price']:,} so‘m\n"
+        f"📌 Holat: {order['status']}"
+    )
+
+    await query.edit_message_text(updated_text)
+
+    try:
+        await context.bot.send_message(
+            chat_id=order["user_id"],
+            text=(
+                f"🆔 Buyurtma ID: {order_id}\n"
+                f"📌 Buyurtmangiz holati yangilandi:\n{order['status']}"
+            ),
+        )
+    except Exception:
+        pass
+
+
+async def list_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Bu buyruq faqat admin uchun.")
+        return
+
+    if not ORDERS:
+        await update.message.reply_text("Hozircha buyurtmalar yo‘q.")
+        return
+
+    lines = ["📦 Buyurtmalar ro‘yxati:\n"]
+    for order_id, order in ORDERS.items():
+        lines.append(
+            f"🆔 {order_id} | {order['product']} | {order['region']} | {order['status']}"
+        )
+
+    await update.message.reply_text("\n".join(lines))
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     section = context.user_data.get("section", "main")
@@ -326,7 +467,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Razmer: 46-56\n"
             "Rang: oq, pushti, qora, qizil, ko‘k\n\n"
             "Buyurtma uchun tugmani bosing:",
-            reply_markup=order_markup
+            reply_markup=order_markup,
         )
 
     elif text == "🥻 Pinuar":
@@ -338,7 +479,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Razmer: 46-56\n"
             "Rang: oq, pushti, qora, qizil, ko‘k\n\n"
             "Buyurtma uchun tugmani bosing:",
-            reply_markup=order_markup
+            reply_markup=order_markup,
         )
 
     elif text == "🌸 Parfumeriya":
@@ -346,8 +487,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["section"] = "product_detail"
         await update.message.reply_text(
             "🌸 Parfumeriya bo‘limi\n\n"
-            "Bu bo‘limga keyin atirlar qo‘shamiz.",
-            reply_markup=order_markup
+            "Narxi: 90 000 so‘m\n"
+            "Buyurtma uchun tugmani bosing:",
+            reply_markup=order_markup,
         )
 
     elif text == "📞 Aloqa":
@@ -358,7 +500,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["section"] = "contact_detail"
         await update.message.reply_text(
             "📍 Toshkent bo‘yicha bo‘limni tanlang:",
-            reply_markup=contact_detail_markup
+            reply_markup=contact_detail_markup,
         )
 
     elif text == "📍 Qo‘qon":
@@ -366,7 +508,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["section"] = "contact_detail"
         await update.message.reply_text(
             "📍 Qo‘qon bo‘yicha bo‘limni tanlang:",
-            reply_markup=contact_detail_markup
+            reply_markup=contact_detail_markup,
         )
 
     elif text == "📱 Qo‘ng‘iroq":
@@ -398,14 +540,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_location(
                 chat_id=update.effective_chat.id,
                 latitude=41.257681,
-                longitude=69.153924
+                longitude=69.153924,
             )
             await update.message.reply_text("📍 Toshkent manzili")
         elif selected_city == "Qo‘qon":
             await context.bot.send_location(
                 chat_id=update.effective_chat.id,
                 latitude=40.554953,
-                longitude=70.963713
+                longitude=70.963713,
             )
             await update.message.reply_text("📍 Qo‘qon manzili")
         else:
@@ -426,7 +568,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["section"] = "products"
             await update.message.reply_text(
                 "Mahsulot bo‘limini tanlang:",
-                reply_markup=product_markup
+                reply_markup=product_markup,
             )
 
         elif section == "contact_city":
@@ -437,7 +579,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["section"] = "contact_city"
             await update.message.reply_text(
                 "📞 Qaysi shahar bo‘yicha aloqa kerak?",
-                reply_markup=city_markup
+                reply_markup=city_markup,
             )
 
         else:
@@ -469,7 +611,9 @@ order_handler = ConversationHandler(
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("menu", menu))
+telegram_app.add_handler(CommandHandler("orders", list_orders))
 telegram_app.add_handler(order_handler)
+telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^(accept|reject):"))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 
