@@ -19,7 +19,7 @@ ADMIN_CHAT_ID = 7450937325
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
 
-ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR = range(4)
+ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR = range(5)
 
 # Asosiy menu
 main_keyboard = [
@@ -82,6 +82,24 @@ color_keyboard = [
 ]
 color_markup = ReplyKeyboardMarkup(color_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+# Buyurtma uchun 12 ta viloyat
+region_keyboard = [
+    ["📍 Toshkent", "📍 Andijon"],
+    ["📍 Farg‘ona", "📍 Namangan"],
+    ["📍 Samarqand", "📍 Buxoro"],
+    ["📍 Xorazm", "📍 Qashqadaryo"],
+    ["📍 Surxondaryo", "📍 Jizzax"],
+    ["📍 Sirdaryo", "📍 Navoiy"],
+    ["⬅️ Orqaga"],
+]
+region_markup = ReplyKeyboardMarkup(region_keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+allowed_regions = [
+    "📍 Toshkent", "📍 Andijon", "📍 Farg‘ona", "📍 Namangan",
+    "📍 Samarqand", "📍 Buxoro", "📍 Xorazm", "📍 Qashqadaryo",
+    "📍 Surxondaryo", "📍 Jizzax", "📍 Sirdaryo", "📍 Navoiy"
+]
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["section"] = "main"
@@ -137,7 +155,35 @@ async def order_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     await update.message.reply_text(
-        f"Buyurtma boshlandi ✅\n\nMahsulot: {product}\n\nIsmingizni yozing:"
+        f"Buyurtma boshlandi ✅\n\n"
+        f"Mahsulot: {product}\n\n"
+        f"Endi buyurtma qilinadigan viloyatni tanlang:",
+        reply_markup=region_markup
+    )
+    return ASK_REGION
+
+
+async def ask_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "⬅️ Orqaga":
+        await update.message.reply_text(
+            "Buyurtma bekor qilindi.",
+            reply_markup=main_markup
+        )
+        context.user_data["section"] = "main"
+        return ConversationHandler.END
+
+    if text not in allowed_regions:
+        await update.message.reply_text(
+            "Viloyatni tugmadan tanlang:",
+            reply_markup=region_markup
+        )
+        return ASK_REGION
+
+    context.user_data["order_region"] = text
+    await update.message.reply_text(
+        f"Tanlangan viloyat: {text}\n\nIsmingizni yozing:"
     )
     return ASK_NAME
 
@@ -213,6 +259,7 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["color"] = text
 
     product = context.user_data.get("product", "")
+    region = context.user_data.get("order_region", "")
     name = context.user_data.get("name", "")
     phone = context.user_data.get("phone", "")
     size = context.user_data.get("size", "")
@@ -221,6 +268,7 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = (
         "✅ Buyurtmangiz qabul qilindi!\n\n"
         f"🛍 Mahsulot: {product}\n"
+        f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
@@ -230,6 +278,7 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_text = (
         "🛒 YANGI BUYURTMA\n\n"
         f"🛍 Mahsulot: {product}\n"
+        f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
@@ -293,6 +342,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif text == "🌸 Parfumeriya":
+        context.user_data["product"] = "Parfumeriya"
         context.user_data["section"] = "product_detail"
         await update.message.reply_text(
             "🌸 Parfumeriya bo‘limi\n\n"
@@ -405,6 +455,7 @@ order_handler = ConversationHandler(
         MessageHandler(filters.Regex("^🛒 Buyurtma berish$"), order_entry),
     ],
     states={
+        ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_region)],
         ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
         ASK_PHONE: [
             MessageHandler(filters.CONTACT, ask_phone),
