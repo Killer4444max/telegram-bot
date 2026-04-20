@@ -32,7 +32,6 @@ if not TOKEN:
 # Bot kanalga majburiy obuna
 # MUHIM: bot shu kanallarda admin bo‘lishi kerak
 REQUIRED_CHANNELS = [
-    ("Shoda kanal 1", "@shoda11Y", "https://t.me/shoda11Y"),
     ("Shoda kanal 2", "@bilyonejni", "https://t.me/bilyonejni"),
 ]
 
@@ -322,7 +321,6 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📢 Bizning kanallarimiz:\n\n"
-        "1️⃣ https://t.me/shoda11Y\n"
         "2️⃣ https://t.me/bilyonejni"
     )
 
