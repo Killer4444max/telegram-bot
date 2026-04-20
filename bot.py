@@ -1,5 +1,7 @@
+import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from telegram import (
@@ -9,6 +11,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from telegram.constants import ChatMemberStatus
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,15 +24,23 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-ADMIN_CHAT_ID = 7450937325  # shu joyga admin telegram ID qoladi
+ADMIN_CHAT_ID = 7450937325
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
 
-ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR = range(5)
+# Bot kanalga majburiy obuna
+# MUHIM: bot shu kanallarda admin bo‘lishi kerak
+REQUIRED_CHANNELS = [
+    ("Shoda kanal 1", "@shoda11Y", "https://t.me/shoda11Y"),
+    ("Shoda kanal 2", "@bilyonejni", "https://t.me/bilyonejni"),
+]
 
-# Vaqtinchalik xotira (deploy bo'lsa tozalanadi)
-ORDERS = {}
+DATA_DIR = Path(".")
+ORDERS_FILE = DATA_DIR / "orders.json"
+USERS_FILE = DATA_DIR / "users.json"
+
+ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT = range(6)
 
 PRODUCT_PRICES = {
     "Pijama": 120000,
@@ -54,6 +65,15 @@ DELIVERY_PRICES = {
 
 ALLOWED_REGIONS = list(DELIVERY_PRICES.keys())
 
+STATUS_LABELS = {
+    "new": "Yangi",
+    "accepted": "Qabul qilindi ✅",
+    "preparing": "Tayyorlanmoqda 🧵",
+    "shipped": "Yuborildi 🚚",
+    "delivered": "Yetkazildi 📦",
+    "rejected": "Bekor qilindi ❌",
+}
+
 # Asosiy menu
 main_keyboard = [
     ["🛍 Mahsulotlar", "📞 Aloqa"],
@@ -61,7 +81,7 @@ main_keyboard = [
 ]
 main_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
-# Mahsulotlar menu
+# Mahsulotlar
 product_keyboard = [
     ["👗 Pijama", "🥻 Pinuar"],
     ["🌸 Parfumeriya"],
@@ -69,7 +89,7 @@ product_keyboard = [
 ]
 product_markup = ReplyKeyboardMarkup(product_keyboard, resize_keyboard=True)
 
-# Aloqa shahar tanlash
+# Aloqa shahar
 city_keyboard = [
     ["📍 Toshkent", "📍 Qo‘qon"],
     ["⬅️ Orqaga"],
@@ -91,14 +111,14 @@ order_keyboard = [
 ]
 order_markup = ReplyKeyboardMarkup(order_keyboard, resize_keyboard=True)
 
-# Telefon yuborish tugmasi
+# Telefon yuborish
 phone_markup = ReplyKeyboardMarkup(
     [[KeyboardButton("📲 Raqamni yuborish", request_contact=True)]],
     resize_keyboard=True,
-    one_time_keyboard=True
+    one_time_keyboard=True,
 )
 
-# Razmer tugmalari
+# Razmer
 size_keyboard = [
     ["46", "48", "50"],
     ["52", "54", "56"],
@@ -106,7 +126,7 @@ size_keyboard = [
 ]
 size_markup = ReplyKeyboardMarkup(size_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-# Rang tugmalari
+# Rang
 color_keyboard = [
     ["⚪ Oq", "🌸 Pushti"],
     ["⚫ Qora", "🔴 Qizil"],
@@ -115,7 +135,7 @@ color_keyboard = [
 ]
 color_markup = ReplyKeyboardMarkup(color_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-# Buyurtma uchun 12 ta viloyat
+# Viloyatlar
 region_keyboard = [
     ["📍 Toshkent", "📍 Andijon"],
     ["📍 Farg‘ona", "📍 Namangan"],
@@ -127,19 +147,138 @@ region_keyboard = [
 ]
 region_markup = ReplyKeyboardMarkup(region_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+# To'lov turi
+payment_keyboard = [
+    ["💵 Naqd", "💳 Karta"],
+    ["📲 Click", "📲 Payme"],
+    ["⬅️ Orqaga"],
+]
+payment_markup = ReplyKeyboardMarkup(payment_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-def make_admin_keyboard(order_id: int) -> InlineKeyboardMarkup:
+ALLOWED_PAYMENTS = ["💵 Naqd", "💳 Karta", "📲 Click", "📲 Payme"]
+
+
+def load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def save_json(path: Path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+ORDERS = load_json(ORDERS_FILE, {})
+USERS = load_json(USERS_FILE, [])
+
+
+def add_user(user_id: int):
+    if user_id not in USERS:
+        USERS.append(user_id)
+        save_json(USERS_FILE, USERS)
+
+
+def next_order_id() -> str:
+    if not ORDERS:
+        return "1"
+    return str(max(int(k) for k in ORDERS.keys()) + 1)
+
+
+def order_text(order_id: str, order: dict) -> str:
+    return (
+        "🛒 BUYURTMA\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
+        f"🛍 Mahsulot: {order['product']}\n"
+        f"📍 Viloyat: {order['region']}\n"
+        f"👤 Ism: {order['name']}\n"
+        f"📱 Telefon: {order['phone']}\n"
+        f"📏 Razmer: {order['size']}\n"
+        f"🎨 Rang: {order['color']}\n"
+        f"💳 To‘lov turi: {order['payment']}\n"
+        f"💵 Mahsulot narxi: {order['product_price']:,} so‘m\n"
+        f"🚚 Yetkazib berish: {order['delivery_price']:,} so‘m\n"
+        f"💰 Jami: {order['total_price']:,} so‘m\n"
+        f"📌 Holat: {order['status']}"
+    )
+
+
+def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("✅ Qabul qilish", callback_data=f"accept:{order_id}"),
-                InlineKeyboardButton("❌ Bekor qilish", callback_data=f"reject:{order_id}"),
-            ]
+                InlineKeyboardButton("✅ Qabul", callback_data=f"status:{order_id}:accepted"),
+                InlineKeyboardButton("🧵 Tayyor", callback_data=f"status:{order_id}:preparing"),
+            ],
+            [
+                InlineKeyboardButton("🚚 Yuborildi", callback_data=f"status:{order_id}:shipped"),
+                InlineKeyboardButton("📦 Yetkazildi", callback_data=f"status:{order_id}:delivered"),
+            ],
+            [
+                InlineKeyboardButton("❌ Bekor", callback_data=f"status:{order_id}:rejected"),
+            ],
         ]
     )
 
 
+def subscription_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for title, _, url in REQUIRED_CHANNELS:
+        rows.append([InlineKeyboardButton(f"🔔 {title}", url=url)])
+    rows.append([InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    allowed = {
+        ChatMemberStatus.MEMBER,
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.OWNER,
+        ChatMemberStatus.RESTRICTED,
+    }
+    try:
+        for _, username, _ in REQUIRED_CHANNELS:
+            member = await context.bot.get_chat_member(username, user_id)
+            if member.status not in allowed:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+async def ensure_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    ok = await is_user_subscribed(context, user_id)
+    if ok:
+        return True
+
+    text = (
+        "❗ Botdan foydalanish uchun avval quyidagi kanallarga a’zo bo‘ling.\n\n"
+        "A’zo bo‘lgach, ✅ Tekshirish tugmasini bosing."
+    )
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            text,
+            reply_markup=subscription_keyboard()
+        )
+    else:
+        await update.effective_message.reply_text(
+            text,
+            reply_markup=subscription_keyboard()
+        )
+    return False
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
+    if not await ensure_subscription(update, context):
+        return
+
     context.user_data["section"] = "main"
     await update.message.reply_text(
         "Assalomu alaykum!\n"
@@ -150,6 +289,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await ensure_subscription(update, context):
+        return
+
     context.user_data["section"] = "main"
     await update.message.reply_text("Asosiy menu ✅", reply_markup=main_markup)
 
@@ -296,6 +438,31 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_COLOR
 
     context.user_data["color"] = text
+    await update.message.reply_text(
+        "To‘lov turini tanlang:",
+        reply_markup=payment_markup
+    )
+    return ASK_PAYMENT
+
+
+async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "⬅️ Orqaga":
+        await update.message.reply_text(
+            "Rangni tanlang:",
+            reply_markup=color_markup
+        )
+        return ASK_COLOR
+
+    if text not in ALLOWED_PAYMENTS:
+        await update.message.reply_text(
+            "To‘lov turini tugmadan tanlang:",
+            reply_markup=payment_markup
+        )
+        return ASK_PAYMENT
+
+    context.user_data["payment"] = text
 
     product = context.user_data.get("product", "")
     region = context.user_data.get("order_region", "")
@@ -303,12 +470,13 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = context.user_data.get("phone", "")
     size = context.user_data.get("size", "")
     color = context.user_data.get("color", "")
+    payment = context.user_data.get("payment", "")
 
     product_price = PRODUCT_PRICES.get(product, 0)
     delivery_price = DELIVERY_PRICES.get(region, 0)
     total_price = product_price + delivery_price
 
-    order_id = len(ORDERS) + 1
+    order_id = next_order_id()
     ORDERS[order_id] = {
         "user_id": update.effective_chat.id,
         "product": product,
@@ -317,11 +485,13 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "phone": phone,
         "size": size,
         "color": color,
+        "payment": payment,
         "product_price": product_price,
         "delivery_price": delivery_price,
         "total_price": total_price,
-        "status": "Yangi",
+        "status": STATUS_LABELS["new"],
     }
+    save_json(ORDERS_FILE, ORDERS)
 
     user_text = (
         "✅ Buyurtmangiz qabul qilindi!\n\n"
@@ -332,24 +502,10 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
         f"🎨 Rang: {color}\n"
+        f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
         f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m"
-    )
-
-    admin_text = (
-        "🛒 YANGI BUYURTMA\n\n"
-        f"🆔 Buyurtma ID: {order_id}\n"
-        f"🛍 Mahsulot: {product}\n"
-        f"📍 Viloyat: {region}\n"
-        f"👤 Ism: {name}\n"
-        f"📱 Telefon: {phone}\n"
-        f"📏 Razmer: {size}\n"
-        f"🎨 Rang: {color}\n"
-        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
-        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
-        f"💰 Jami: {total_price:,} so‘m\n"
-        f"📌 Holat: Yangi"
     )
 
     await update.message.reply_text(user_text, reply_markup=main_markup)
@@ -357,8 +513,8 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text=admin_text,
-            reply_markup=make_admin_keyboard(order_id)
+            text=order_text(order_id, ORDERS[order_id]),
+            reply_markup=admin_order_keyboard(order_id)
         )
     except Exception:
         await update.message.reply_text(
@@ -388,37 +544,20 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Siz admin emassiz.", show_alert=True)
         return
 
-    data = query.data
-    action, order_id_str = data.split(":")
-    order_id = int(order_id_str)
+    _, order_id, status_key = query.data.split(":")
+    order = ORDERS.get(order_id)
 
-    if order_id not in ORDERS:
+    if not order:
         await query.edit_message_text("Buyurtma topilmadi.")
         return
 
-    order = ORDERS[order_id]
+    order["status"] = STATUS_LABELS[status_key]
+    save_json(ORDERS_FILE, ORDERS)
 
-    if action == "accept":
-        order["status"] = "Qabul qilindi ✅"
-    elif action == "reject":
-        order["status"] = "Bekor qilindi ❌"
-
-    updated_text = (
-        "🛒 BUYURTMA HOLATI YANGILANDI\n\n"
-        f"🆔 Buyurtma ID: {order_id}\n"
-        f"🛍 Mahsulot: {order['product']}\n"
-        f"📍 Viloyat: {order['region']}\n"
-        f"👤 Ism: {order['name']}\n"
-        f"📱 Telefon: {order['phone']}\n"
-        f"📏 Razmer: {order['size']}\n"
-        f"🎨 Rang: {order['color']}\n"
-        f"💵 Mahsulot narxi: {order['product_price']:,} so‘m\n"
-        f"🚚 Yetkazib berish: {order['delivery_price']:,} so‘m\n"
-        f"💰 Jami: {order['total_price']:,} so‘m\n"
-        f"📌 Holat: {order['status']}"
+    await query.edit_message_text(
+        order_text(order_id, order),
+        reply_markup=admin_order_keyboard(order_id)
     )
-
-    await query.edit_message_text(updated_text)
 
     try:
         await context.bot.send_message(
@@ -450,7 +589,89 @@ async def list_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def reklamastart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Bu buyruq faqat admin uchun.")
+        return
+
+    context.user_data["broadcast_mode"] = True
+    await update.message.reply_text(
+        "📢 Reklama rejimi yoqildi.\n"
+        "Endi yuborgan keyingi text, rasm, video yoki post hamma userlarga boradi.\n\n"
+        "Bekor qilish: /cancel_reklama"
+    )
+
+
+async def cancel_reklama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    context.user_data["broadcast_mode"] = False
+    await update.message.reply_text("Reklama rejimi bekor qilindi.")
+
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    if not context.user_data.get("broadcast_mode"):
+        return
+
+    sent = 0
+    failed = 0
+    admin_id = update.effective_chat.id
+    msg = update.effective_message
+
+    for user_id in USERS:
+        try:
+            if int(user_id) == int(admin_id):
+                continue
+
+            await context.bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=admin_id,
+                message_id=msg.message_id
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+
+    context.user_data["broadcast_mode"] = False
+    await update.message.reply_text(
+        f"✅ Reklama yuborildi.\n\n"
+        f"Yuborildi: {sent}\n"
+        f"Xato: {failed}"
+    )
+
+
+async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    ok = await is_user_subscribed(context, query.from_user.id)
+    if ok:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(
+            "✅ Obuna tasdiqlandi.\nAsosiy menu:",
+            reply_markup=main_markup
+        )
+    else:
+        await query.answer("Hali barcha kanallarga a’zo bo‘lmagansiz.", show_alert=True)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
+
+    if not await ensure_subscription(update, context):
+        return
+
+    if update.effective_user.id == ADMIN_CHAT_ID and context.user_data.get("broadcast_mode"):
+        await handle_broadcast(update, context)
+        return
+
     text = update.message.text
     section = context.user_data.get("section", "main")
     selected_city = context.user_data.get("selected_city", "")
@@ -605,6 +826,7 @@ order_handler = ConversationHandler(
         ],
         ASK_SIZE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_size)],
         ASK_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_color)],
+        ASK_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_payment)],
     },
     fallbacks=[CommandHandler("cancel", cancel_order)],
 )
@@ -612,9 +834,12 @@ order_handler = ConversationHandler(
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("menu", menu))
 telegram_app.add_handler(CommandHandler("orders", list_orders))
+telegram_app.add_handler(CommandHandler("reklama", reklamastart))
+telegram_app.add_handler(CommandHandler("cancel_reklama", cancel_reklama))
 telegram_app.add_handler(order_handler)
-telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^(accept|reject):"))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+telegram_app.add_handler(CallbackQueryHandler(check_subscription_callback, pattern="^check_sub$"))
+telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^status:"))
+telegram_app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_text))
 
 
 @asynccontextmanager
