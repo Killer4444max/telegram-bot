@@ -10,6 +10,7 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    LabeledPrice,
 )
 from telegram.constants import ChatMemberStatus
 from telegram.ext import (
@@ -19,10 +20,12 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ConversationHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
 TOKEN = os.getenv("TOKEN")
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 ADMIN_CHAT_ID = 7450937325
 
@@ -71,6 +74,7 @@ STATUS_LABELS = {
     "shipped": "Yuborildi 🚚",
     "delivered": "Yetkazildi 📦",
     "rejected": "Bekor qilindi ❌",
+    "paid": "To‘landi ✅",
 }
 
 # Asosiy menu
@@ -464,15 +468,43 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     product = context.user_data.get("product", "")
     region = context.user_data.get("order_region", "")
+    product_price = PRODUCT_PRICES.get(product, 0)
+    delivery_price = DELIVERY_PRICES.get(region, 0)
+    total_price = product_price + delivery_price
+
+    # Agar karta bo‘lsa Telegram invoice yuboramiz
+    if text == "💳 Karta":
+        if not PROVIDER_TOKEN:
+            await update.message.reply_text("PROVIDER_TOKEN topilmadi.")
+            return ConversationHandler.END
+
+        context.user_data["pending_total"] = total_price
+        context.user_data["pending_product_price"] = product_price
+        context.user_data["pending_delivery_price"] = delivery_price
+
+        await context.bot.send_invoice(
+            chat_id=update.effective_chat.id,
+            title=f"{product} uchun to‘lov",
+            description=f"{product} + yetkazib berish",
+            payload=f"order_{update.effective_user.id}_{product}",
+            provider_token=PROVIDER_TOKEN,
+            currency="UZS",
+            prices=[
+                LabeledPrice(label=product, amount=product_price * 100),
+                LabeledPrice(label="Yetkazib berish", amount=delivery_price * 100),
+            ],
+            start_parameter="shop-payment",
+        )
+
+        await update.message.reply_text("💳 To‘lov oynasi yuborildi.")
+        return ConversationHandler.END
+
+    # Qolgan to‘lov turlari oddiy saqlanadi
     name = context.user_data.get("name", "")
     phone = context.user_data.get("phone", "")
     size = context.user_data.get("size", "")
     color = context.user_data.get("color", "")
     payment = context.user_data.get("payment", "")
-
-    product_price = PRODUCT_PRICES.get(product, 0)
-    delivery_price = DELIVERY_PRICES.get(region, 0)
-    total_price = product_price + delivery_price
 
     order_id = next_order_id()
     ORDERS[order_id] = {
@@ -522,6 +554,63 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["section"] = "main"
     return ConversationHandler.END
+
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payment = update.message.successful_payment
+
+    product = context.user_data.get("product", "")
+    region = context.user_data.get("order_region", "")
+    name = context.user_data.get("name", "")
+    phone = context.user_data.get("phone", "")
+    size = context.user_data.get("size", "")
+    color = context.user_data.get("color", "")
+    product_price = context.user_data.get("pending_product_price", PRODUCT_PRICES.get(product, 0))
+    delivery_price = context.user_data.get("pending_delivery_price", DELIVERY_PRICES.get(region, 0))
+    total_price = context.user_data.get("pending_total", product_price + delivery_price)
+
+    order_id = next_order_id()
+    ORDERS[order_id] = {
+        "user_id": update.effective_chat.id,
+        "product": product,
+        "region": region,
+        "name": name,
+        "phone": phone,
+        "size": size,
+        "color": color,
+        "payment": "💳 Karta",
+        "product_price": product_price,
+        "delivery_price": delivery_price,
+        "total_price": total_price,
+        "status": STATUS_LABELS["paid"],
+        "telegram_payment_charge_id": payment.telegram_payment_charge_id,
+        "provider_payment_charge_id": payment.provider_payment_charge_id,
+    }
+    save_json(ORDERS_FILE, ORDERS)
+
+    await update.message.reply_text(
+        "✅ To‘lov muvaffaqiyatli amalga oshdi!\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
+        f"💰 Jami to‘lov: {total_price:,} so‘m",
+        reply_markup=main_markup
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=order_text(order_id, ORDERS[order_id]),
+            reply_markup=admin_order_keyboard(order_id)
+        )
+    except Exception:
+        pass
+
+    context.user_data.clear()
+    context.user_data["section"] = "main"
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -835,6 +924,8 @@ telegram_app.add_handler(CommandHandler("orders", list_orders))
 telegram_app.add_handler(CommandHandler("reklama", reklamastart))
 telegram_app.add_handler(CommandHandler("cancel_reklama", cancel_reklama))
 telegram_app.add_handler(order_handler)
+telegram_app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+telegram_app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 telegram_app.add_handler(CallbackQueryHandler(check_subscription_callback, pattern="^check_sub$"))
 telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^status:"))
 telegram_app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_text))
