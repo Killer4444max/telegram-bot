@@ -10,7 +10,6 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    LabeledPrice,
 )
 from telegram.constants import ChatMemberStatus
 from telegram.ext import (
@@ -20,17 +19,25 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ConversationHandler,
-    PreCheckoutQueryHandler,
     filters,
 )
 
 TOKEN = os.getenv("TOKEN")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
-ADMIN_CHAT_ID = 7450937325
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+CARD_NUMBER = os.getenv("CARD_NUMBER")
+CARD_HOLDER = os.getenv("CARD_HOLDER")
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
+
+if not ADMIN_CHAT_ID:
+    raise RuntimeError("ADMIN_CHAT_ID topilmadi")
+
+if not CARD_NUMBER or not CARD_HOLDER:
+    raise RuntimeError("CARD_NUMBER yoki CARD_HOLDER topilmadi")
+
+ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
 
 # Faqat bitta kanal
 # MUHIM: bot shu kanalda admin bo‘lishi kerak
@@ -42,7 +49,7 @@ DATA_DIR = Path(".")
 ORDERS_FILE = DATA_DIR / "orders.json"
 USERS_FILE = DATA_DIR / "users.json"
 
-ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT = range(6)
+ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT, ASK_RECEIPT = range(7)
 
 PRODUCT_PRICES = {
     "Pijama": 120000,
@@ -74,7 +81,9 @@ STATUS_LABELS = {
     "shipped": "Yuborildi 🚚",
     "delivered": "Yetkazildi 📦",
     "rejected": "Bekor qilindi ❌",
-    "paid": "To‘landi ✅",
+    "paid": "To‘lov tekshirilmoqda ⏳",
+    "receipt_ok": "To‘lov tushdi ✅",
+    "receipt_bad": "To‘lov topilmadi ❌",
 }
 
 # Asosiy menu
@@ -214,6 +223,10 @@ def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
+                InlineKeyboardButton("✅ To‘lov tushdi", callback_data=f"status:{order_id}:receipt_ok"),
+                InlineKeyboardButton("❌ To‘lov tushmadi", callback_data=f"status:{order_id}:receipt_bad"),
+            ],
+            [
                 InlineKeyboardButton("✅ Qabul", callback_data=f"status:{order_id}:accepted"),
                 InlineKeyboardButton("🧵 Tayyor", callback_data=f"status:{order_id}:preparing"),
             ],
@@ -237,19 +250,14 @@ def subscription_keyboard() -> InlineKeyboardMarkup:
 
 
 async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    allowed = {
-        ChatMemberStatus.MEMBER,
-        ChatMemberStatus.ADMINISTRATOR,
-        ChatMemberStatus.OWNER,
-        ChatMemberStatus.RESTRICTED,
-    }
     try:
         for _, username, _ in REQUIRED_CHANNELS:
-            member = await context.bot.get_chat_member(username, user_id)
-            if member.status not in allowed:
+            member = await context.bot.get_chat_member(chat_id=username, user_id=user_id)
+            if member.status in [ChatMemberStatus.LEFT, ChatMemberStatus.BANNED]:
                 return False
         return True
-    except Exception:
+    except Exception as e:
+        print("Subscription check error:", e)
         return False
 
 
@@ -472,34 +480,21 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delivery_price = DELIVERY_PRICES.get(region, 0)
     total_price = product_price + delivery_price
 
-    # Agar karta bo‘lsa Telegram invoice yuboramiz
-    if text == "💳 Karta":
-        if not PROVIDER_TOKEN:
-            await update.message.reply_text("PROVIDER_TOKEN topilmadi.")
-            return ConversationHandler.END
-
+    if text in ["💳 Karta", "📲 Click", "📲 Payme"]:
         context.user_data["pending_total"] = total_price
         context.user_data["pending_product_price"] = product_price
         context.user_data["pending_delivery_price"] = delivery_price
 
-        await context.bot.send_invoice(
-            chat_id=update.effective_chat.id,
-            title=f"{product} uchun to‘lov",
-            description=f"{product} + yetkazib berish",
-            payload=f"order_{update.effective_user.id}_{product}",
-            provider_token=PROVIDER_TOKEN,
-            currency="UZS",
-            prices=[
-                LabeledPrice(label=product, amount=product_price * 100),
-                LabeledPrice(label="Yetkazib berish", amount=delivery_price * 100),
-            ],
-            start_parameter="shop-payment",
+        await update.message.reply_text(
+            "💳 To‘lov uchun karta:\n\n"
+            f"👤 Karta egasi: {CARD_HOLDER}\n"
+            f"💳 Karta raqami: {CARD_NUMBER}\n\n"
+            f"💰 To‘lanadigan summa: {total_price:,} so‘m\n\n"
+            "To‘lov qilganingizdan keyin chek rasmini yuboring."
         )
+        return ASK_RECEIPT
 
-        await update.message.reply_text("💳 To‘lov oynasi yuborildi.")
-        return ConversationHandler.END
-
-    # Qolgan to‘lov turlari oddiy saqlanadi
+    # Naqd bo‘lsa
     name = context.user_data.get("name", "")
     phone = context.user_data.get("phone", "")
     size = context.user_data.get("size", "")
@@ -523,7 +518,7 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     save_json(ORDERS_FILE, ORDERS)
 
-    user_text = (
+    await update.message.reply_text(
         "✅ Buyurtmangiz qabul qilindi!\n\n"
         f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {product}\n"
@@ -535,68 +530,7 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
         f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
-        f"💰 Jami: {total_price:,} so‘m"
-    )
-
-    await update.message.reply_text(user_text, reply_markup=main_markup)
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=order_text(order_id, ORDERS[order_id]),
-            reply_markup=admin_order_keyboard(order_id)
-        )
-    except Exception:
-        await update.message.reply_text(
-            "Buyurtma saqlandi, lekin adminga yuborilmadi. ADMIN_CHAT_ID ni tekshiring."
-        )
-
-    context.user_data.clear()
-    context.user_data["section"] = "main"
-    return ConversationHandler.END
-
-
-async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
-
-
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payment = update.message.successful_payment
-
-    product = context.user_data.get("product", "")
-    region = context.user_data.get("order_region", "")
-    name = context.user_data.get("name", "")
-    phone = context.user_data.get("phone", "")
-    size = context.user_data.get("size", "")
-    color = context.user_data.get("color", "")
-    product_price = context.user_data.get("pending_product_price", PRODUCT_PRICES.get(product, 0))
-    delivery_price = context.user_data.get("pending_delivery_price", DELIVERY_PRICES.get(region, 0))
-    total_price = context.user_data.get("pending_total", product_price + delivery_price)
-
-    order_id = next_order_id()
-    ORDERS[order_id] = {
-        "user_id": update.effective_chat.id,
-        "product": product,
-        "region": region,
-        "name": name,
-        "phone": phone,
-        "size": size,
-        "color": color,
-        "payment": "💳 Karta",
-        "product_price": product_price,
-        "delivery_price": delivery_price,
-        "total_price": total_price,
-        "status": STATUS_LABELS["paid"],
-        "telegram_payment_charge_id": payment.telegram_payment_charge_id,
-        "provider_payment_charge_id": payment.provider_payment_charge_id,
-    }
-    save_json(ORDERS_FILE, ORDERS)
-
-    await update.message.reply_text(
-        "✅ To‘lov muvaffaqiyatli amalga oshdi!\n\n"
-        f"🆔 Buyurtma ID: {order_id}\n"
-        f"💰 Jami to‘lov: {total_price:,} so‘m",
+        f"💰 Jami: {total_price:,} so‘m",
         reply_markup=main_markup
     )
 
@@ -607,10 +541,92 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             reply_markup=admin_order_keyboard(order_id)
         )
     except Exception:
-        pass
+        await update.message.reply_text("Buyurtma saqlandi, lekin adminga yuborilmadi.")
 
     context.user_data.clear()
     context.user_data["section"] = "main"
+    return ConversationHandler.END
+
+
+async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo and not update.message.document:
+        await update.message.reply_text("Chek rasmini yuboring.")
+        return ASK_RECEIPT
+
+    product = context.user_data.get("product", "")
+    region = context.user_data.get("order_region", "")
+    name = context.user_data.get("name", "")
+    phone = context.user_data.get("phone", "")
+    size = context.user_data.get("size", "")
+    color = context.user_data.get("color", "")
+    payment = context.user_data.get("payment", "")
+    product_price = context.user_data.get("pending_product_price", 0)
+    delivery_price = context.user_data.get("pending_delivery_price", 0)
+    total_price = context.user_data.get("pending_total", 0)
+
+    order_id = next_order_id()
+    ORDERS[order_id] = {
+        "user_id": update.effective_chat.id,
+        "product": product,
+        "region": region,
+        "name": name,
+        "phone": phone,
+        "size": size,
+        "color": color,
+        "payment": payment,
+        "product_price": product_price,
+        "delivery_price": delivery_price,
+        "total_price": total_price,
+        "status": STATUS_LABELS["paid"],
+    }
+    save_json(ORDERS_FILE, ORDERS)
+
+    await update.message.reply_text(
+        "✅ Chekingiz qabul qilindi.\n"
+        "Admin tekshiradi.\n\n"
+        f"🆔 Buyurtma ID: {order_id}",
+        reply_markup=main_markup
+    )
+
+    admin_text = (
+        "🧾 YANGI TO‘LOV CHEKI\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
+        f"🛍 Mahsulot: {product}\n"
+        f"📍 Viloyat: {region}\n"
+        f"👤 Ism: {name}\n"
+        f"📱 Telefon: {phone}\n"
+        f"📏 Razmer: {size}\n"
+        f"🎨 Rang: {color}\n"
+        f"💳 To‘lov turi: {payment}\n"
+        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
+        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
+        f"💰 Jami: {total_price:,} so‘m\n"
+        f"📌 Holat: {STATUS_LABELS['paid']}"
+    )
+
+    try:
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            await context.bot.send_photo(
+                chat_id=ADMIN_CHAT_ID,
+                photo=file_id,
+                caption=admin_text,
+                reply_markup=admin_order_keyboard(order_id)
+            )
+        else:
+            file_id = update.message.document.file_id
+            await context.bot.send_document(
+                chat_id=ADMIN_CHAT_ID,
+                document=file_id,
+                caption=admin_text,
+                reply_markup=admin_order_keyboard(order_id)
+            )
+    except Exception:
+        await update.message.reply_text("Chek adminga yuborilmadi.")
+
+    context.user_data.clear()
+    context.user_data["section"] = "main"
+    return ConversationHandler.END
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -914,6 +930,10 @@ order_handler = ConversationHandler(
         ASK_SIZE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_size)],
         ASK_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_color)],
         ASK_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_payment)],
+        ASK_RECEIPT: [
+            MessageHandler(filters.PHOTO | filters.Document.IMAGE, ask_receipt),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, ask_receipt),
+        ],
     },
     fallbacks=[CommandHandler("cancel", cancel_order)],
 )
@@ -924,8 +944,6 @@ telegram_app.add_handler(CommandHandler("orders", list_orders))
 telegram_app.add_handler(CommandHandler("reklama", reklamastart))
 telegram_app.add_handler(CommandHandler("cancel_reklama", cancel_reklama))
 telegram_app.add_handler(order_handler)
-telegram_app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-telegram_app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 telegram_app.add_handler(CallbackQueryHandler(check_subscription_callback, pattern="^check_sub$"))
 telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^status:"))
 telegram_app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_text))
