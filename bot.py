@@ -43,7 +43,7 @@ ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
 
 # Majburiy obuna uchun kanal
 REQUIRED_CHANNELS = [
-    ("Bizning kanal", "@bilyonejni", "https://t.me/bilyonejni"),
+    ("Bizning kanal", "@pijamas_optom", "https://t.me/pijamas_optom"),
 ]
 
 DATA_DIR = Path(".")
@@ -373,7 +373,7 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📢 Bizning kanal:\n\nhttps://t.me/bilyonejni")
+    await update.message.reply_text("📢 Bizning kanal:\n\nhttps://t.me/pijamas_optom")
 
 
 async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, product_name: str, emoji_title: str):
