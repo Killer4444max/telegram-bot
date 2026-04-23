@@ -28,7 +28,7 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 CARD_NUMBER = os.getenv("CARD_NUMBER")
 CARD_HOLDER = os.getenv("CARD_HOLDER")
-PRODUCT_CHANNEL_USERNAME = os.getenv("PRODUCT_CHANNEL_USERNAME")  # masalan: @shoda_products
+PRODUCT_CHANNEL_USERNAME = os.getenv("PRODUCT_CHANNEL_USERNAME")  # masalan: @pijamas_optom
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
@@ -53,22 +53,22 @@ PRODUCTS_FILE = DATA_DIR / "products.json"
 
 ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT, ASK_RECEIPT = range(7)
 
-DELIVERY_PRICES = {
-    "📍 Toshkent": 15000,
-    "📍 Andijon": 25000,
-    "📍 Farg‘ona": 20000,
-    "📍 Namangan": 25000,
-    "📍 Samarqand": 25000,
-    "📍 Buxoro": 30000,
-    "📍 Xorazm": 35000,
-    "📍 Qashqadaryo": 30000,
-    "📍 Surxondaryo": 35000,
-    "📍 Jizzax": 25000,
-    "📍 Sirdaryo": 20000,
-    "📍 Navoiy": 30000,
-}
+DELIVERY_PRICES = {}
 
-ALLOWED_REGIONS = list(DELIVERY_PRICES.keys())
+ALLOWED_REGIONS = [
+    "📍 Toshkent",
+    "📍 Andijon",
+    "📍 Farg‘ona",
+    "📍 Namangan",
+    "📍 Samarqand",
+    "📍 Buxoro",
+    "📍 Xorazm",
+    "📍 Qashqadaryo",
+    "📍 Surxondaryo",
+    "📍 Jizzax",
+    "📍 Sirdaryo",
+    "📍 Navoiy",
+]
 
 STATUS_LABELS = {
     "new": "Yangi",
@@ -434,10 +434,9 @@ async def ask_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_REGION
 
     context.user_data["order_region"] = text
-    delivery_price = DELIVERY_PRICES.get(text, 0)
 
     await update.message.reply_text(
-        f"Tanlangan viloyat: {text}\n🚚 Yetkazib berish narxi: {delivery_price:,} so‘m\n\nIsmingizni yozing:"
+        f"Tanlangan viloyat: {text}\n\nIsmingizni yozing:"
     )
     return ASK_NAME
 
@@ -510,8 +509,8 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_price = found[1]["price"] if found else 0
 
     region = context.user_data.get("order_region", "")
-    delivery_price = DELIVERY_PRICES.get(region, 0)
-    total_price = product_price + delivery_price
+    delivery_price = 0
+    total_price = product_price
 
     if text in ["💳 Karta", "📲 Click", "📲 Payme"]:
         context.user_data["pending_total"] = total_price
@@ -561,7 +560,6 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎨 Rang: {color}\n"
         f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
-        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m",
         reply_markup=main_markup
     )
@@ -593,7 +591,7 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     color = context.user_data.get("color", "")
     payment = context.user_data.get("payment", "")
     product_price = context.user_data.get("pending_product_price", 0)
-    delivery_price = context.user_data.get("pending_delivery_price", 0)
+    delivery_price = 0
     total_price = context.user_data.get("pending_total", 0)
 
     order_id = next_order_id()
@@ -630,7 +628,6 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎨 Rang: {color}\n"
         f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
-        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m\n"
         f"📌 Holat: {STATUS_LABELS['paid']}"
     )
