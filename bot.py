@@ -4,6 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import google.generativeai as genai
 from fastapi import FastAPI, Request
 from telegram import (
     Update,
@@ -28,7 +29,8 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 CARD_NUMBER = os.getenv("CARD_NUMBER")
 CARD_HOLDER = os.getenv("CARD_HOLDER")
-PRODUCT_CHANNEL_USERNAME = os.getenv("PRODUCT_CHANNEL_USERNAME")  # masalan: @shoda_products
+PRODUCT_CHANNEL_USERNAME = os.getenv("PRODUCT_CHANNEL_USERNAME")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not TOKEN:
     raise RuntimeError("TOKEN topilmadi")
@@ -41,7 +43,12 @@ if not PRODUCT_CHANNEL_USERNAME:
 
 ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
 
-# Majburiy obuna uchun kanal
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel("gemini-1.5-flash")
+else:
+    ai_model = None
+
 REQUIRED_CHANNELS = [
     ("Bizning kanal", "@pijamas_optom", "https://t.me/pijamas_optom"),
 ]
@@ -53,22 +60,20 @@ PRODUCTS_FILE = DATA_DIR / "products.json"
 
 ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT, ASK_RECEIPT = range(7)
 
-DELIVERY_PRICES = {
-    "📍 Toshkent": 15000,
-    "📍 Andijon": 25000,
-    "📍 Farg‘ona": 20000,
-    "📍 Namangan": 25000,
-    "📍 Samarqand": 25000,
-    "📍 Buxoro": 30000,
-    "📍 Xorazm": 35000,
-    "📍 Qashqadaryo": 30000,
-    "📍 Surxondaryo": 35000,
-    "📍 Jizzax": 25000,
-    "📍 Sirdaryo": 20000,
-    "📍 Navoiy": 30000,
-}
-
-ALLOWED_REGIONS = list(DELIVERY_PRICES.keys())
+ALLOWED_REGIONS = [
+    "📍 Toshkent",
+    "📍 Andijon",
+    "📍 Farg‘ona",
+    "📍 Namangan",
+    "📍 Samarqand",
+    "📍 Buxoro",
+    "📍 Xorazm",
+    "📍 Qashqadaryo",
+    "📍 Surxondaryo",
+    "📍 Jizzax",
+    "📍 Sirdaryo",
+    "📍 Navoiy",
+]
 
 STATUS_LABELS = {
     "new": "Yangi",
@@ -82,37 +87,30 @@ STATUS_LABELS = {
     "receipt_bad": "To‘lov topilmadi ❌",
 }
 
-main_keyboard = [
-    ["🛍 Mahsulotlar", "📞 Aloqa"],
-    ["ℹ️ Haqimizda", "📢 Kanal"],
-]
-main_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
+main_markup = ReplyKeyboardMarkup(
+    [["🛍 Mahsulotlar", "📞 Aloqa"], ["ℹ️ Haqimizda", "📢 Kanal"]],
+    resize_keyboard=True,
+)
 
-product_keyboard = [
-    ["👗 Pijama", "🥻 Pinuar"],
-    ["🌸 Parfumeriya"],
-    ["⬅️ Orqaga"],
-]
-product_markup = ReplyKeyboardMarkup(product_keyboard, resize_keyboard=True)
+product_markup = ReplyKeyboardMarkup(
+    [["👗 Pijama", "🥻 Pinuar"], ["🌸 Parfumeriya"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+)
 
-city_keyboard = [
-    ["📍 Toshkent", "📍 Qo‘qon"],
-    ["⬅️ Orqaga"],
-]
-city_markup = ReplyKeyboardMarkup(city_keyboard, resize_keyboard=True)
+city_markup = ReplyKeyboardMarkup(
+    [["📍 Toshkent", "📍 Qo‘qon"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+)
 
-contact_detail_keyboard = [
-    ["📱 Qo‘ng‘iroq", "💬 Telegram"],
-    ["📍 Manzil"],
-    ["⬅️ Orqaga"],
-]
-contact_detail_markup = ReplyKeyboardMarkup(contact_detail_keyboard, resize_keyboard=True)
+contact_detail_markup = ReplyKeyboardMarkup(
+    [["📱 Qo‘ng‘iroq", "💬 Telegram"], ["📍 Manzil"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+)
 
-order_keyboard = [
-    ["🛒 Buyurtma berish"],
-    ["⬅️ Orqaga"],
-]
-order_markup = ReplyKeyboardMarkup(order_keyboard, resize_keyboard=True)
+order_markup = ReplyKeyboardMarkup(
+    [["🛒 Buyurtma berish"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+)
 
 phone_markup = ReplyKeyboardMarkup(
     [[KeyboardButton("📲 Raqamni yuborish", request_contact=True)]],
@@ -120,38 +118,37 @@ phone_markup = ReplyKeyboardMarkup(
     one_time_keyboard=True,
 )
 
-size_keyboard = [
-    ["46", "48", "50"],
-    ["52", "54", "56"],
-    ["⬅️ Orqaga"],
-]
-size_markup = ReplyKeyboardMarkup(size_keyboard, resize_keyboard=True, one_time_keyboard=True)
+size_markup = ReplyKeyboardMarkup(
+    [["46", "48", "50"], ["52", "54", "56"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
 
-color_keyboard = [
-    ["⚪ Oq", "🌸 Pushti"],
-    ["⚫ Qora", "🔴 Qizil"],
-    ["🔵 Ko‘k"],
-    ["⬅️ Orqaga"],
-]
-color_markup = ReplyKeyboardMarkup(color_keyboard, resize_keyboard=True, one_time_keyboard=True)
+color_markup = ReplyKeyboardMarkup(
+    [["⚪ Oq", "🌸 Pushti"], ["⚫ Qora", "🔴 Qizil"], ["🔵 Ko‘k"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
 
-region_keyboard = [
-    ["📍 Toshkent", "📍 Andijon"],
-    ["📍 Farg‘ona", "📍 Namangan"],
-    ["📍 Samarqand", "📍 Buxoro"],
-    ["📍 Xorazm", "📍 Qashqadaryo"],
-    ["📍 Surxondaryo", "📍 Jizzax"],
-    ["📍 Sirdaryo", "📍 Navoiy"],
-    ["⬅️ Orqaga"],
-]
-region_markup = ReplyKeyboardMarkup(region_keyboard, resize_keyboard=True, one_time_keyboard=True)
+region_markup = ReplyKeyboardMarkup(
+    [
+        ["📍 Toshkent", "📍 Andijon"],
+        ["📍 Farg‘ona", "📍 Namangan"],
+        ["📍 Samarqand", "📍 Buxoro"],
+        ["📍 Xorazm", "📍 Qashqadaryo"],
+        ["📍 Surxondaryo", "📍 Jizzax"],
+        ["📍 Sirdaryo", "📍 Navoiy"],
+        ["⬅️ Orqaga"],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
 
-payment_keyboard = [
-    ["💵 Naqd", "💳 Karta"],
-    ["📲 Click", "📲 Payme"],
-    ["⬅️ Orqaga"],
-]
-payment_markup = ReplyKeyboardMarkup(payment_keyboard, resize_keyboard=True, one_time_keyboard=True)
+payment_markup = ReplyKeyboardMarkup(
+    [["💵 Naqd", "💳 Karta"], ["📲 Click", "📲 Payme"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
 
 ALLOWED_PAYMENTS = ["💵 Naqd", "💳 Karta", "📲 Click", "📲 Payme"]
 
@@ -200,7 +197,6 @@ def order_text(order_id: str, order: dict) -> str:
         f"🎨 Rang: {order['color']}\n"
         f"💳 To‘lov turi: {order['payment']}\n"
         f"💵 Mahsulot narxi: {order['product_price']:,} so‘m\n"
-        f"🚚 Yetkazib berish: {order['delivery_price']:,} so‘m\n"
         f"💰 Jami: {order['total_price']:,} so‘m\n"
         f"📌 Holat: {order['status']}"
     )
@@ -221,9 +217,7 @@ def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🚚 Yuborildi", callback_data=f"status:{order_id}:shipped"),
                 InlineKeyboardButton("📦 Yetkazildi", callback_data=f"status:{order_id}:delivered"),
             ],
-            [
-                InlineKeyboardButton("❌ Bekor", callback_data=f"status:{order_id}:rejected"),
-            ],
+            [InlineKeyboardButton("❌ Bekor", callback_data=f"status:{order_id}:rejected")],
         ]
     )
 
@@ -280,8 +274,7 @@ async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
 
 
 async def ensure_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    ok = await is_user_subscribed(context, user_id)
+    ok = await is_user_subscribed(context, update.effective_user.id)
     if ok:
         return True
 
@@ -302,14 +295,12 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg:
         return
 
-    chat = msg.chat
-    chat_username = f"@{chat.username.lower()}" if chat.username else ""
+    chat_username = f"@{msg.chat.username.lower()}" if msg.chat.username else ""
 
     if chat_username != PRODUCT_CHANNEL_USERNAME.lower():
         return
 
-    caption = msg.caption or ""
-    parsed = parse_product_caption(caption)
+    parsed = parse_product_caption(msg.caption or "")
     if not parsed:
         return
 
@@ -332,7 +323,6 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         "channel_post_id": msg.message_id,
     }
     save_json(PRODUCTS_FILE, PRODUCTS)
-
     print(f"Mahsulot saqlandi: {code} - {parsed['name']}")
 
 
@@ -344,7 +334,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["section"] = "main"
     await update.message.reply_text(
         "Assalomu alaykum!\nBotga xush kelibsiz 🚀\n\nQuyidagi menyudan birini tanlang:",
-        reply_markup=main_markup
+        reply_markup=main_markup,
     )
 
 
@@ -364,7 +354,7 @@ async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["section"] = "contact_city"
     await update.message.reply_text(
         "📞 Qaysi shahar bo‘yicha aloqa kerak?\n\nQuyidan tanlang:",
-        reply_markup=city_markup
+        reply_markup=city_markup,
     )
 
 
@@ -381,8 +371,7 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
     if not found:
         await update.message.reply_text(
             f"{emoji_title} bo‘limi uchun hali kanalga yoki guruhga mahsulot joylanmagan.\n\n"
-            "Post formati:\n"
-            "NOM: ...\nNARX: ...\nKOD: ...\nRANG: ..."
+            "Post formati:\nNOM: ...\nNARX: ...\nKOD: ...\nRANG: ..."
         )
         return
 
@@ -404,7 +393,7 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
         chat_id=update.effective_chat.id,
         photo=product["photo_file_id"],
         caption=text,
-        reply_markup=order_markup
+        reply_markup=order_markup,
     )
 
 
@@ -416,7 +405,7 @@ async def order_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"Buyurtma boshlandi ✅\n\nMahsulot: {product}\n\nEndi buyurtma qilinadigan viloyatni tanlang:",
-        reply_markup=region_markup
+        reply_markup=region_markup,
     )
     return ASK_REGION
 
@@ -434,11 +423,7 @@ async def ask_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_REGION
 
     context.user_data["order_region"] = text
-    delivery_price = DELIVERY_PRICES.get(text, 0)
-
-    await update.message.reply_text(
-        f"Tanlangan viloyat: {text}\n🚚 Yetkazib berish narxi: {delivery_price:,} so‘m\n\nIsmingizni yozing:"
-    )
+    await update.message.reply_text(f"Tanlangan viloyat: {text}\n\nIsmingizni yozing:")
     return ASK_NAME
 
 
@@ -510,13 +495,11 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_price = found[1]["price"] if found else 0
 
     region = context.user_data.get("order_region", "")
-    delivery_price = DELIVERY_PRICES.get(region, 0)
-    total_price = product_price + delivery_price
+    total_price = product_price
 
     if text in ["💳 Karta", "📲 Click", "📲 Payme"]:
         context.user_data["pending_total"] = total_price
         context.user_data["pending_product_price"] = product_price
-        context.user_data["pending_delivery_price"] = delivery_price
 
         await update.message.reply_text(
             "💳 To‘lov uchun karta:\n\n"
@@ -544,7 +527,6 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "color": color,
         "payment": payment,
         "product_price": product_price,
-        "delivery_price": delivery_price,
         "total_price": total_price,
         "status": STATUS_LABELS["new"],
     }
@@ -561,16 +543,15 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎨 Rang: {color}\n"
         f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
-        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m",
-        reply_markup=main_markup
+        reply_markup=main_markup,
     )
 
     try:
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=order_text(order_id, ORDERS[order_id]),
-            reply_markup=admin_order_keyboard(order_id)
+            reply_markup=admin_order_keyboard(order_id),
         )
     except Exception:
         await update.message.reply_text("Buyurtma saqlandi, lekin adminga yuborilmadi.")
@@ -593,7 +574,6 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     color = context.user_data.get("color", "")
     payment = context.user_data.get("payment", "")
     product_price = context.user_data.get("pending_product_price", 0)
-    delivery_price = context.user_data.get("pending_delivery_price", 0)
     total_price = context.user_data.get("pending_total", 0)
 
     order_id = next_order_id()
@@ -607,7 +587,6 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "color": color,
         "payment": payment,
         "product_price": product_price,
-        "delivery_price": delivery_price,
         "total_price": total_price,
         "status": STATUS_LABELS["paid"],
     }
@@ -616,7 +595,7 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Chekingiz qabul qilindi.\nAdmin tekshiradi.\n\n"
         f"🆔 Buyurtma ID: {order_id}",
-        reply_markup=main_markup
+        reply_markup=main_markup,
     )
 
     admin_text = (
@@ -630,7 +609,6 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎨 Rang: {color}\n"
         f"💳 To‘lov turi: {payment}\n"
         f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
-        f"🚚 Yetkazib berish: {delivery_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m\n"
         f"📌 Holat: {STATUS_LABELS['paid']}"
     )
@@ -642,7 +620,7 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=ADMIN_CHAT_ID,
                 photo=file_id,
                 caption=admin_text,
-                reply_markup=admin_order_keyboard(order_id)
+                reply_markup=admin_order_keyboard(order_id),
             )
         else:
             file_id = update.message.document.file_id
@@ -650,7 +628,7 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=ADMIN_CHAT_ID,
                 document=file_id,
                 caption=admin_text,
-                reply_markup=admin_order_keyboard(order_id)
+                reply_markup=admin_order_keyboard(order_id),
             )
     except Exception:
         await update.message.reply_text("Chek adminga yuborilmadi.")
@@ -694,12 +672,12 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.message.photo or query.message.document:
             await query.edit_message_caption(
                 caption=new_text,
-                reply_markup=admin_order_keyboard(order_id)
+                reply_markup=admin_order_keyboard(order_id),
             )
         else:
             await query.edit_message_text(
                 text=new_text,
-                reply_markup=admin_order_keyboard(order_id)
+                reply_markup=admin_order_keyboard(order_id),
             )
     except Exception as e:
         print("Admin action error:", e)
@@ -768,7 +746,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=admin_id,
-                message_id=msg.message_id
+                message_id=msg.message_id,
             )
             sent += 1
         except Exception:
@@ -791,6 +769,26 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
         await query.message.reply_text("✅ Obuna tasdiqlandi.\nAsosiy menu:", reply_markup=main_markup)
     else:
         await query.answer("Hali kanalga a’zo bo‘lmagansiz.", show_alert=True)
+
+
+async def ai_reply(update: Update, text: str):
+    if not ai_model:
+        await update.message.reply_text("Kerakli tugmani tanlang.")
+        return
+
+    try:
+        response = ai_model.generate_content(
+            "Sen Shodashop kiyim do‘koni uchun sotuvchi-yordamchi botsan. "
+            "Qisqa, chiroyli va foydali javob ber. "
+            "User Uzbek tilida yozsa Uzbek tilida javob ber. "
+            "Mahsulotlar: pijama, pinuar, parfumeriya. "
+            "Buyurtma berish uchun userga mahsulot tanlashni ayt.\n\n"
+            f"User savoli: {text}"
+        )
+        await update.message.reply_text(response.text)
+    except Exception as e:
+        print("Gemini AI error:", e)
+        await update.message.reply_text("AI vaqtincha ishlamayapti.")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -882,7 +880,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Asosiy menu", reply_markup=main_markup)
 
     else:
-        await update.message.reply_text("Kerakli tugmani tanlang.")
+        await ai_reply(update, text)
 
 
 telegram_app = Application.builder().token(TOKEN).build()
@@ -918,12 +916,10 @@ telegram_app.add_handler(CallbackQueryHandler(admin_action, pattern="^status:"))
 telegram_app.add_handler(
     MessageHandler(
         (filters.ChatType.CHANNEL | filters.ChatType.GROUPS) & (filters.PHOTO | filters.Document.IMAGE),
-        handle_channel_post
+        handle_channel_post,
     )
 )
-telegram_app.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
-)
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 
 @asynccontextmanager
