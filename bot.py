@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -12,6 +13,7 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputMediaPhoto,
 )
 from telegram.constants import ChatMemberStatus
 from telegram.ext import (
@@ -171,6 +173,7 @@ def save_json(path: Path, data):
 ORDERS = load_json(ORDERS_FILE, {})
 USERS = load_json(USERS_FILE, [])
 PRODUCTS = load_json(PRODUCTS_FILE, {})
+ALBUMS = {}
 
 
 def add_user(user_id: int):
@@ -291,6 +294,32 @@ async def ensure_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     return False
 
 
+async def save_album_later(media_group_id: str):
+    await asyncio.sleep(2)
+
+    album = ALBUMS.pop(media_group_id, None)
+    if not album:
+        return
+
+    parsed = album.get("parsed")
+    photos = album.get("photos", [])
+
+    if not parsed or not photos:
+        return
+
+    code = parsed["code"]
+    PRODUCTS[code] = {
+        "name": parsed["name"],
+        "price": parsed["price"],
+        "code": code,
+        "color": parsed["color"],
+        "photo_file_ids": photos,
+    }
+
+    save_json(PRODUCTS_FILE, PRODUCTS)
+    print(f"Album mahsulot saqlandi: {code} - {parsed['name']} | rasmlar: {len(photos)}")
+
+
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
     if not msg:
@@ -299,10 +328,6 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_username = f"@{msg.chat.username.lower()}" if msg.chat.username else ""
 
     if chat_username != PRODUCT_CHANNEL_USERNAME.lower():
-        return
-
-    parsed = parse_product_caption(msg.caption or "")
-    if not parsed:
         return
 
     photo_file_id = None
@@ -314,15 +339,37 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not photo_file_id:
         return
 
+    if msg.media_group_id:
+        group_id = str(msg.media_group_id)
+
+        if group_id not in ALBUMS:
+            ALBUMS[group_id] = {"photos": [], "parsed": None, "task_started": False}
+
+        ALBUMS[group_id]["photos"].append(photo_file_id)
+
+        parsed = parse_product_caption(msg.caption or "")
+        if parsed:
+            ALBUMS[group_id]["parsed"] = parsed
+
+        if not ALBUMS[group_id]["task_started"]:
+            ALBUMS[group_id]["task_started"] = True
+            asyncio.create_task(save_album_later(group_id))
+
+        return
+
+    parsed = parse_product_caption(msg.caption or "")
+    if not parsed:
+        return
+
     code = parsed["code"]
     PRODUCTS[code] = {
         "name": parsed["name"],
         "price": parsed["price"],
         "code": code,
         "color": parsed["color"],
-        "photo_file_id": photo_file_id,
-        "channel_post_id": msg.message_id,
+        "photo_file_ids": [photo_file_id],
     }
+
     save_json(PRODUCTS_FILE, PRODUCTS)
     print(f"Mahsulot saqlandi: {code} - {parsed['name']}")
 
@@ -387,7 +434,7 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
         context.user_data["product"] = product["name"]
         context.user_data["product_code"] = code
 
-        text = (
+        caption = (
             f"{emoji_title}\n\n"
             f"🛍 Nomi: {product['name']}\n"
             f"🆔 Kodi: {product['code']}\n"
@@ -395,11 +442,26 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
             f"🎨 Rang: {product.get('color', '-')}"
         )
 
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=product["photo_file_id"],
-            caption=text,
-        )
+        photo_ids = product.get("photo_file_ids") or [product.get("photo_file_id")]
+
+        if len(photo_ids) == 1:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo_ids[0],
+                caption=caption,
+            )
+        else:
+            media = []
+            for i, photo_id in enumerate(photo_ids):
+                if i == 0:
+                    media.append(InputMediaPhoto(media=photo_id, caption=caption))
+                else:
+                    media.append(InputMediaPhoto(media=photo_id))
+
+            await context.bot.send_media_group(
+                chat_id=update.effective_chat.id,
+                media=media,
+            )
 
     await update.message.reply_text(
         "Buyurtma berish uchun tugmani bosing:",
