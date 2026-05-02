@@ -254,11 +254,12 @@ def parse_product_caption(caption: str) -> dict | None:
     }
 
 
-def get_product_by_name(name: str) -> tuple[str, dict] | None:
+def get_products_by_name(name: str) -> list[tuple[str, dict]]:
+    result = []
     for code, product in PRODUCTS.items():
         if product.get("name", "").lower() == name.lower():
-            return code, product
-    return None
+            result.append((code, product))
+    return result
 
 
 async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
@@ -367,33 +368,42 @@ async def channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, product_name: str, emoji_title: str):
-    found = get_product_by_name(product_name)
-    if not found:
+    products_list = get_products_by_name(product_name)
+
+    if not products_list:
         await update.message.reply_text(
             f"{emoji_title} bo‘limi uchun hali kanalga yoki guruhga mahsulot joylanmagan.\n\n"
-            "Post formati:\nNOM: ...\nNARX: ...\nKOD: ...\nRANG: ..."
+            "Post formati:\n"
+            "NOM: Pijama\n"
+            "NARX: 120000\n"
+            "KOD: PJ01\n"
+            "RANG: oq, qora"
         )
         return
 
-    code, product = found
-    context.user_data["product"] = product["name"]
-    context.user_data["product_code"] = code
     context.user_data["section"] = "product_detail"
 
-    text = (
-        f"{emoji_title} bo‘limi\n\n"
-        f"🛍 Nomi: {product['name']}\n"
-        f"🆔 Kodi: {product['code']}\n"
-        f"💵 Narxi: {product['price']:,} so‘m\n"
-        f"🎨 Rang: {product.get('color', '-')}\n\n"
-        "Buyurtma uchun tugmani bosing:"
-    )
+    for code, product in products_list:
+        context.user_data["product"] = product["name"]
+        context.user_data["product_code"] = code
 
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo=product["photo_file_id"],
-        caption=text,
-        reply_markup=order_markup,
+        text = (
+            f"{emoji_title}\n\n"
+            f"🛍 Nomi: {product['name']}\n"
+            f"🆔 Kodi: {product['code']}\n"
+            f"💵 Narxi: {product['price']:,} so‘m\n"
+            f"🎨 Rang: {product.get('color', '-')}"
+        )
+
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=product["photo_file_id"],
+            caption=text,
+        )
+
+    await update.message.reply_text(
+        "Buyurtma berish uchun tugmani bosing:",
+        reply_markup=order_markup
     )
 
 
@@ -491,8 +501,12 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["payment"] = text
 
     product_name = context.user_data.get("product", "")
-    found = get_product_by_name(product_name)
-    product_price = found[1]["price"] if found else 0
+    product_code = context.user_data.get("product_code", "")
+    product_price = 0
+
+    if product_code and product_code in PRODUCTS:
+        product_price = PRODUCTS[product_code].get("price", 0)
+        product_name = PRODUCTS[product_code].get("name", product_name)
 
     region = context.user_data.get("order_region", "")
     total_price = product_price
