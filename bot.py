@@ -60,7 +60,7 @@ ORDERS_FILE = DATA_DIR / "orders.json"
 USERS_FILE = DATA_DIR / "users.json"
 PRODUCTS_FILE = DATA_DIR / "products.json"
 
-ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_PAYMENT, ASK_RECEIPT = range(7)
+ASK_REGION, ASK_NAME, ASK_PHONE, ASK_SIZE, ASK_COLOR, ASK_QUANTITY, ASK_PAYMENT, ASK_RECEIPT = range(8)
 
 ALLOWED_REGIONS = [
     "📍 Toshkent",
@@ -109,11 +109,6 @@ contact_detail_markup = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-order_markup = ReplyKeyboardMarkup(
-    [["🛒 Buyurtma berish"], ["⬅️ Orqaga"]],
-    resize_keyboard=True,
-)
-
 phone_markup = ReplyKeyboardMarkup(
     [[KeyboardButton("📲 Raqamni yuborish", request_contact=True)]],
     resize_keyboard=True,
@@ -128,6 +123,12 @@ size_markup = ReplyKeyboardMarkup(
 
 color_markup = ReplyKeyboardMarkup(
     [["⚪ Oq", "🌸 Pushti"], ["⚫ Qora", "🔴 Qizil"], ["🔵 Ko‘k"], ["⬅️ Orqaga"]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
+
+quantity_markup = ReplyKeyboardMarkup(
+    [["1", "2", "3"], ["4", "5", "10"], ["⬅️ Orqaga"]],
     resize_keyboard=True,
     one_time_keyboard=True,
 )
@@ -193,13 +194,15 @@ def order_text(order_id: str, order: dict) -> str:
         "🛒 BUYURTMA\n\n"
         f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {order['product']}\n"
+        f"🆔 Mahsulot kodi: {order.get('product_code', '-')}\n"
         f"📍 Viloyat: {order['region']}\n"
         f"👤 Ism: {order['name']}\n"
         f"📱 Telefon: {order['phone']}\n"
         f"📏 Razmer: {order['size']}\n"
         f"🎨 Rang: {order['color']}\n"
+        f"🔢 Soni: {order.get('quantity', 1)} ta\n"
         f"💳 To‘lov turi: {order['payment']}\n"
-        f"💵 Mahsulot narxi: {order['product_price']:,} so‘m\n"
+        f"💵 1 dona narxi: {order['product_price']:,} so‘m\n"
         f"💰 Jami: {order['total_price']:,} so‘m\n"
         f"📌 Holat: {order['status']}"
     )
@@ -222,6 +225,12 @@ def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("❌ Bekor", callback_data=f"status:{order_id}:rejected")],
         ]
+    )
+
+
+def product_order_keyboard(code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"🛒 {code} ni buyurtma qilish", callback_data=f"buy:{code}")]]
     )
 
 
@@ -428,18 +437,16 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
         )
         return
 
-    context.user_data["section"] = "product_detail"
+    context.user_data["section"] = "products"
 
     for code, product in products_list:
-        context.user_data["product"] = product["name"]
-        context.user_data["product_code"] = code
-
         caption = (
             f"{emoji_title}\n\n"
             f"🛍 Nomi: {product['name']}\n"
             f"🆔 Kodi: {product['code']}\n"
             f"💵 Narxi: {product['price']:,} so‘m\n"
-            f"🎨 Rang: {product.get('color', '-')}"
+            f"🎨 Rang: {product.get('color', '-')}\n\n"
+            "Buyurtma qilish uchun pastdagi tugmani bosing."
         )
 
         photo_ids = product.get("photo_file_ids") or [product.get("photo_file_id")]
@@ -449,6 +456,7 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
                 chat_id=update.effective_chat.id,
                 photo=photo_ids[0],
                 caption=caption,
+                reply_markup=product_order_keyboard(code),
             )
         else:
             media = []
@@ -462,21 +470,36 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE, produ
                 chat_id=update.effective_chat.id,
                 media=media,
             )
+            await update.message.reply_text(
+                f"🛒 {code} mahsulotini buyurtma qilish:",
+                reply_markup=product_order_keyboard(code),
+            )
 
-    await update.message.reply_text(
-        "Buyurtma berish uchun tugmani bosing:",
-        reply_markup=order_markup
-    )
 
+async def order_entry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-async def order_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    product = context.user_data.get("product")
-    if not product:
-        await update.message.reply_text("Avval mahsulotni tanlang.")
+    if not await ensure_subscription(update, context):
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        f"Buyurtma boshlandi ✅\n\nMahsulot: {product}\n\nEndi buyurtma qilinadigan viloyatni tanlang:",
+    code = query.data.split(":", 1)[1]
+    product = PRODUCTS.get(code)
+
+    if not product:
+        await query.message.reply_text("Bu mahsulot topilmadi. Qaytadan tanlang.")
+        return ConversationHandler.END
+
+    context.user_data["product"] = product["name"]
+    context.user_data["product_code"] = code
+    context.user_data["product_price"] = product["price"]
+
+    await query.message.reply_text(
+        f"Buyurtma boshlandi ✅\n\n"
+        f"🛍 Mahsulot: {product['name']}\n"
+        f"🆔 Kod: {code}\n"
+        f"💵 Narx: {product['price']:,} so‘m\n\n"
+        "Endi buyurtma qilinadigan viloyatni tanlang:",
         reply_markup=region_markup,
     )
     return ASK_REGION
@@ -545,6 +568,22 @@ async def ask_color(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_COLOR
 
     context.user_data["color"] = text
+    await update.message.reply_text("Nechta olasiz?", reply_markup=quantity_markup)
+    return ASK_QUANTITY
+
+
+async def ask_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "⬅️ Orqaga":
+        await update.message.reply_text("Rangni tanlang:", reply_markup=color_markup)
+        return ASK_COLOR
+
+    if not text.isdigit() or int(text) <= 0:
+        await update.message.reply_text("Soni faqat raqam bo‘lsin. Masalan: 1, 2, 3")
+        return ASK_QUANTITY
+
+    context.user_data["quantity"] = int(text)
     await update.message.reply_text("To‘lov turini tanlang:", reply_markup=payment_markup)
     return ASK_PAYMENT
 
@@ -553,8 +592,8 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "⬅️ Orqaga":
-        await update.message.reply_text("Rangni tanlang:", reply_markup=color_markup)
-        return ASK_COLOR
+        await update.message.reply_text("Nechta olasiz?", reply_markup=quantity_markup)
+        return ASK_QUANTITY
 
     if text not in ALLOWED_PAYMENTS:
         await update.message.reply_text("To‘lov turini tugmadan tanlang:", reply_markup=payment_markup)
@@ -564,14 +603,15 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     product_name = context.user_data.get("product", "")
     product_code = context.user_data.get("product_code", "")
-    product_price = 0
+    product_price = int(context.user_data.get("product_price", 0))
+    quantity = int(context.user_data.get("quantity", 1))
 
     if product_code and product_code in PRODUCTS:
-        product_price = PRODUCTS[product_code].get("price", 0)
+        product_price = int(PRODUCTS[product_code].get("price", product_price))
         product_name = PRODUCTS[product_code].get("name", product_name)
 
     region = context.user_data.get("order_region", "")
-    total_price = product_price
+    total_price = product_price * quantity
 
     if text in ["💳 Karta", "📲 Click", "📲 Payme"]:
         context.user_data["pending_total"] = total_price
@@ -581,6 +621,8 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💳 To‘lov uchun karta:\n\n"
             f"👤 Karta egasi: {CARD_HOLDER}\n"
             f"💳 Karta raqami: {CARD_NUMBER}\n\n"
+            f"💵 1 dona narxi: {product_price:,} so‘m\n"
+            f"🔢 Soni: {quantity} ta\n"
             f"💰 To‘lanadigan summa: {total_price:,} so‘m\n\n"
             "To‘lov qilganingizdan keyin chek rasmini yuboring."
         )
@@ -596,11 +638,13 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ORDERS[order_id] = {
         "user_id": update.effective_chat.id,
         "product": product_name,
+        "product_code": product_code,
         "region": region,
         "name": name,
         "phone": phone,
         "size": size,
         "color": color,
+        "quantity": quantity,
         "payment": payment,
         "product_price": product_price,
         "total_price": total_price,
@@ -612,13 +656,15 @@ async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Buyurtmangiz qabul qilindi!\n\n"
         f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {product_name}\n"
+        f"🆔 Kod: {product_code}\n"
         f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
         f"🎨 Rang: {color}\n"
+        f"🔢 Soni: {quantity} ta\n"
         f"💳 To‘lov turi: {payment}\n"
-        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
+        f"💵 1 dona narxi: {product_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m",
         reply_markup=main_markup,
     )
@@ -643,24 +689,28 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_RECEIPT
 
     product = context.user_data.get("product", "")
+    product_code = context.user_data.get("product_code", "")
     region = context.user_data.get("order_region", "")
     name = context.user_data.get("name", "")
     phone = context.user_data.get("phone", "")
     size = context.user_data.get("size", "")
     color = context.user_data.get("color", "")
     payment = context.user_data.get("payment", "")
-    product_price = context.user_data.get("pending_product_price", 0)
-    total_price = context.user_data.get("pending_total", 0)
+    quantity = int(context.user_data.get("quantity", 1))
+    product_price = int(context.user_data.get("pending_product_price", 0))
+    total_price = int(context.user_data.get("pending_total", 0))
 
     order_id = next_order_id()
     ORDERS[order_id] = {
         "user_id": update.effective_chat.id,
         "product": product,
+        "product_code": product_code,
         "region": region,
         "name": name,
         "phone": phone,
         "size": size,
         "color": color,
+        "quantity": quantity,
         "payment": payment,
         "product_price": product_price,
         "total_price": total_price,
@@ -678,13 +728,15 @@ async def ask_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🧾 YANGI TO‘LOV CHEKI\n\n"
         f"🆔 Buyurtma ID: {order_id}\n"
         f"🛍 Mahsulot: {product}\n"
+        f"🆔 Kod: {product_code}\n"
         f"📍 Viloyat: {region}\n"
         f"👤 Ism: {name}\n"
         f"📱 Telefon: {phone}\n"
         f"📏 Razmer: {size}\n"
         f"🎨 Rang: {color}\n"
+        f"🔢 Soni: {quantity} ta\n"
         f"💳 To‘lov turi: {payment}\n"
-        f"💵 Mahsulot narxi: {product_price:,} so‘m\n"
+        f"💵 1 dona narxi: {product_price:,} so‘m\n"
         f"💰 Jami: {total_price:,} so‘m\n"
         f"📌 Holat: {STATUS_LABELS['paid']}"
     )
@@ -778,7 +830,7 @@ async def list_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["📦 Buyurtmalar ro‘yxati:\n"]
     for order_id, order in ORDERS.items():
-        lines.append(f"🆔 {order_id} | {order['product']} | {order['region']} | {order['status']}")
+        lines.append(f"🆔 {order_id} | {order['product']} | {order.get('product_code', '-')} | {order['region']} | {order['status']}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -942,9 +994,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if section == "products":
             context.user_data["section"] = "main"
             await update.message.reply_text("Asosiy menu", reply_markup=main_markup)
-        elif section == "product_detail":
-            context.user_data["section"] = "products"
-            await update.message.reply_text("Mahsulot bo‘limini tanlang:", reply_markup=product_markup)
         elif section == "contact_city":
             context.user_data["section"] = "main"
             await update.message.reply_text("Asosiy menu", reply_markup=main_markup)
@@ -962,7 +1011,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 telegram_app = Application.builder().token(TOKEN).build()
 
 order_handler = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex("^🛒 Buyurtma berish$"), order_entry)],
+    entry_points=[CallbackQueryHandler(order_entry_callback, pattern="^buy:")],
     states={
         ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_region)],
         ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
@@ -972,6 +1021,7 @@ order_handler = ConversationHandler(
         ],
         ASK_SIZE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_size)],
         ASK_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_color)],
+        ASK_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_quantity)],
         ASK_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_payment)],
         ASK_RECEIPT: [
             MessageHandler(filters.PHOTO | filters.Document.IMAGE, ask_receipt),
