@@ -52,7 +52,7 @@ else:
     ai_model = None
 
 REQUIRED_CHANNELS = [
-    ("Bizning kanal", "@pijamas_optom", "https://t.me/pijamas_optom"),
+    ("Bizning kanal", "@pijamas_optom", ),
 ]
 
 DATA_DIR = Path(".")
